@@ -19,7 +19,7 @@ const char* TRACKER_ID = "Tracker_1";
 //////////////////// NGROK BACKEND ////////////////////
 
 const char* NGROK_BASE_URL = "https://dismount-tactics-parasail.ngrok-free.dev";
-const char* TRACKER_ROUTE = "/tracker/register";   
+const char* TRACKER_ROUTE = "/tracker/register";
 
 //////////////////// FIREBASE ////////////////////
 
@@ -83,7 +83,7 @@ void setup() {
   Serial.println("Ready");
 }
 
-//////////////////// MAIN LOOP ////////////////////
+//////////////////// LOOP ////////////////////
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -124,19 +124,19 @@ void connectWiFi() {
   }
 }
 
-//////////////////// GPS HELPERS ////////////////////
+//////////////////// GPS STATUS ////////////////////
 
 String getGpsStatus() {
-  if (!gps.location.isValid()) return "SEARCHING";
-  if (getSatellites() >= 4) return "GOOD FIX";
-  return "WEAK FIX";
+  if (!gps.location.isValid()) return "NO_FIX";
+  if (getSatellites() < 3) return "WEAK_SIGNAL";
+  return "FIXED";
 }
 
 int getSatellites() {
   return gps.satellites.isValid() ? gps.satellites.value() : 0;
 }
 
-//////////////////// READ GPS ////////////////////
+//////////////////// GPS READ ////////////////////
 
 void readGPS() {
   while (gpsSerial.available()) {
@@ -145,9 +145,9 @@ void readGPS() {
 
   if (millis() - lastGpsPrint > 3000) {
     lastGpsPrint = millis();
-    Serial.print("GPS:");
+    Serial.print("GPS: ");
     Serial.print(getGpsStatus());
-    Serial.print(" SAT:");
+    Serial.print(" SAT: ");
     Serial.println(getSatellites());
   }
 
@@ -161,14 +161,10 @@ void readGPS() {
 
     if (Firebase.ready() && signupOK) {
       sendToFirebase(lat, lng);
-    } else {
-      Serial.println("FB SKIP");
     }
 
     if (backendAllowed) {
       sendTrackerInfoToBackend();
-    } else {
-      Serial.println("API WAIT");
     }
   }
 }
@@ -191,7 +187,7 @@ void sendToFirebase(float lat, float lng) {
   content.set("fields/gpsStatus/stringValue", getGpsStatus());
   content.set("fields/satellites/integerValue", String(getSatellites()));
 
-  bool ok = Firebase.Firestore.patchDocument(
+  Firebase.Firestore.patchDocument(
     &fbdo,
     PROJECT_ID,
     "",
@@ -200,16 +196,13 @@ void sendToFirebase(float lat, float lng) {
     "location,isOnline,lastUpdated,speed,gpsStatus,satellites"
   );
 
-  Serial.println(ok ? "FB OK" : "FB FAIL");
+  Serial.println("FB SENT");
 }
 
-//////////////////// TRACKER INFO TO BACKEND ////////////////////
+//////////////////// BACKEND API ////////////////////
 
 void sendTrackerInfoToBackend() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("API SKIP");
-    return;
-  }
+  if (WiFi.status() != WL_CONNECTED) return;
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -224,27 +217,33 @@ void sendTrackerInfoToBackend() {
 
   http.addHeader("Content-Type", "application/json");
 
-  // ✅ CLEAN JSON (MySQL TINYINT SAFE)
+  bool gpsValid = gps.location.isValid();
+
   String payload = "{";
   payload += "\"tracker_id\":\"" + String(TRACKER_ID) + "\",";
-  payload += "\"is_online\":1,";
+  payload += "\"is_online\":1,";   // tinyint(1) = 1/0
   payload += "\"gps_status\":\"" + getGpsStatus() + "\",";
+
+  if (gpsValid) {
+    payload += "\"latitude\":" + String(gps.location.lat(), 6) + ",";
+    payload += "\"longitude\":" + String(gps.location.lng(), 6) + ",";
+  } else {
+    payload += "\"latitude\":null,";
+    payload += "\"longitude\":null,";
+  }
+
   payload += "\"last_updated\":\"" + String(millis()) + "\"";
   payload += "}";
 
-  // 🔥 DEBUG (VERY IMPORTANT)
-  Serial.println("---- SENDING TO BACKEND ----");
+  Serial.println("---- BACKEND PAYLOAD ----");
   Serial.println(payload);
 
   int code = http.POST(payload);
 
-  Serial.print("API RESPONSE CODE: ");
+  Serial.print("API CODE: ");
   Serial.println(code);
 
-  String response = http.getString();
-  Serial.println("RESPONSE:");
-  Serial.println(response);
+  Serial.println(http.getString());
 
   http.end();
 }
-dismount-tactics-parasail.ngrok-free.dev
